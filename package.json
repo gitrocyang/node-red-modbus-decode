@@ -1,0 +1,24 @@
+{
+  "name": "node-red-modbus-decode",
+  "version": "0.0.1",
+  "description": "modbus的协议解析节点，依赖node-red-contrib-modbus,从modbus-getter，modbus-flex-getter获取数据后进行解析",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gitrocyang/node-red-modbus-decode.git"
+  },
+  "keywords": [
+    "node-red",
+    "modbus",
+    "decode"
+  ],
+  "author": "rocyang@126.com",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/gitrocyang/node-red-modbus-decode/issues"
+  },
+  "homepage": "https://github.com/gitrocyang/node-red-modbus-decode#readme"
+}
