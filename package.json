@@ -1,8 +1,8 @@
 {
-  "name": "node-red-modbus-decode",
+  "name": "@rocyang/modbus-decode",
   "version": "0.0.1",
   "description": "modbus的协议解析节点，依赖node-red-contrib-modbus,从modbus-getter，modbus-flex-getter获取数据后进行解析",
-  "main": "index.js",
+  "main": "modbus-decode.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -11,14 +11,23 @@
     "url": "git+https://github.com/gitrocyang/node-red-modbus-decode.git"
   },
   "keywords": [
-    "node-red",
     "modbus",
-    "decode"
+    "modbus-decode",
+    "node-red"
   ],
   "author": "rocyang@126.com",
-  "license": "Apache-2.0",
+  "license": "ISC",
   "bugs": {
     "url": "https://github.com/gitrocyang/node-red-modbus-decode/issues"
   },
-  "homepage": "https://github.com/gitrocyang/node-red-modbus-decode#readme"
+  "homepage": "https://github.com/gitrocyang/node-red-modbus-decode#readme",
+  "node-red": {
+    "nodes": {
+      "modbus-decode": "modbus-decode.js"
+    }
+  },
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "sprintf-js": "^1.1.3"
+  }
 }

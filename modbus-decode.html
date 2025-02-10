@@ -1,0 +1,696 @@
+<script type="text/javascript">
+    'use strict'
+    var Protocol = {
+        'ColumnsConfig': []
+    }, DevicesMapping = {
+        'DeviceConfig': []
+    };
+
+    const ColumnsList = '#node-input-columns-container';
+    const DevicesList = '#node-input-devices-container';
+    const TotalColumnsCount = '#columns-count-total';
+    const ColumnsPageCount = '#columns-count-page';
+    const TotalDevicesCount = '#devices-count-total';
+    const DevicesPageCount = '#devices-count-page';
+
+    const PageSize = 5;
+
+    RED.nodes.registerType('modbus-decode', { // 这个值 必须和 js 中 RED.nodes.registerType 的值一致
+        category: '协议解析', // 分类
+        color: '#95e1d3', // 节点颜色
+        defaults: {
+            name: { value: "" }, // name 默认是空
+            columns: {
+                value: []
+            },
+            devices: {
+                value: []
+            }
+        },
+        inputs: 1, // 节点有多少输入 0 或者多个
+        outputs: 2, // 节点有多少输出 0 或者多个
+        icon: "font-awesome/fa-cogs", // 节点使用的图标
+        paletteLabel: "解析器", // 节点显示的名称
+        label: function () { // 节点的工作区的标签
+            return this.name || "解析器";
+        },
+        // 钩子函数,双击节点调出 template 时触发
+        oneditprepare: function () {
+
+            var RowHTML = '<li class="red-ui-editableList-item-sortable red-ui-editableList-item-removable"><div class="red-ui-editableList-item-content"></div><i class="red-ui-editableList-item-handle fa fa-bars"></i><button type="button" class="red-ui-editableList-item-remove editor-button editor-button-small" title="删除"><i class="fa fa-remove"></i></button></li>';
+
+            // Tab 切换逻辑
+            $("#node-config-tabs").on("click", "a", function (evt) {
+                evt.preventDefault();
+                var targetTab = $(this).attr('href');
+
+                // 移除所有 li 元素上的 active 类
+                $("#node-config-tabs li").removeClass("active");
+                // 为当前点击的 a 标签所在的 li 元素增加 active 类
+                $(this).parent("li").addClass("active");
+
+                $(".tab-item").hide(); // 隐藏所有tab内容
+                $(targetTab).show();   // 显示当前选择的tab内容
+                setTimeout(() => { // 延迟执行，等待页面渲染完成调用高度初始化
+                    RED.tray.resize();
+                }, 300);
+            });
+
+            // 默认显示第一个tab的内容
+            $("#tab-config").show();
+
+            var columnSize = {
+                minHeight: 370,
+                minWidth: 450
+            }
+
+            // 初始化
+            var labelHtml = '',
+                fieldMap = {},
+                fieldOrder = [];
+            Protocol.ColumnsPage = 1;
+            Protocol.ColumnsValues = (this.columns || []).slice();
+            Protocol.ColumnsConfig = [{
+                key: 'Key',
+                name: '测点编码',
+                type: 'input',
+                len: 'normal'
+            }, {
+                key: 'Label',
+                name: '标签',
+                type: 'input',
+                len: 'normal'
+            }, {
+                key: 'Offset',
+                name: '偏移量',
+                type: 'input',
+                len: 'short'
+            }, {
+                key: 'Length',
+                name: '长度',
+                type: 'input',
+                len: 'short'
+            }, {
+                key: "ValueType",
+                name: "数据类型",
+                len: "normal",
+                type: "select",
+                option: [
+                    "Int8",
+                    "Int16BE",
+                    "Int16LE",
+                    "Int32BE",
+                    "Int32LE",
+                    "Int64BE",
+                    "Int64LE",
+                    "UInt8",
+                    "UInt16BE",
+                    "UInt16LE",
+                    "UInt32BE",
+                    "UInt32LE",
+                    "UInt64BE",
+                    "UInt64LE",
+                    "FloatBE",
+                    "FloatLE",
+                    "DoubleBE",
+                    "DoubleLE",
+                    "String",
+                    "Buffer"
+                ]
+            }, {
+                key: 'Arithmetic',
+                name: '算法',
+                type: 'input',
+                len: 'normal'
+            }];
+
+            //测点列表容器初始化
+            $(ColumnsList).css('min-height', columnSize.minHeight.toString() + 'px').css('min-width', columnSize.minWidth.toString() + 'px').editableList({
+                sortable: true,
+                removable: true,
+                addItem: (element, container, state) => {
+                    if ($(ColumnsList).editableList('items').length > PageSize) {
+                        updateColumnPage();
+                        clearAll(ColumnsList);
+                        Protocol.ColumnsPage++;
+                        loadColumnPage(Protocol.ColumnsValues, Protocol.ColumnsPage);
+                    }
+                    addColumn(state.prop, element);
+                    element.parent().find('.red-ui-editableList-item-remove')[0].onclick = function () {
+                        updateColumnsCount(-1);
+                    };
+                    refreshColumnView();
+                    updateColumnsCount();
+                },
+                buttons: [
+                    {
+                        label: "全部删除",
+                        icon: "fa fa-trash-o",
+                        title: "全部删除",
+                        click: function (evt) {
+                            clearAll(ColumnsList);
+                            $(TotalColumnsCount)[0].innerText = '测点总数:0';
+                            $(ColumnsPageCount)[0].innerText = '当前页:1';
+                            Protocol.ColumnsPage = 1;
+                            Protocol.ColumnsValues = [];
+                        }
+                    }, {
+                        label: "导入",
+                        icon: "fa fa-upload",
+                        title: "导入",
+                        click: function (evt) {
+                            $('#node-import').click();
+                        }
+                    }, {
+                        label: "导出",
+                        icon: "fa fa-download",
+                        title: "导出",
+                        click: function (evt) {
+                            updateColumnPage();
+                            var lines = [];
+                            lines.push(fieldOrder);
+                            for (var row of Protocol.ColumnsValues) {
+                                var line = [];
+                                for (var colConfig of Protocol.ColumnsConfig) {
+                                    line.push(row[colConfig.key]);
+                                }
+                                lines.push(line);
+                            }
+                            saveAs(new Blob([lines.join('\r\n')]), 'protocol-columns.csv');
+                        }
+                    }, {
+                        label: "下一页",
+                        icon: "fa fa-arrow-right",
+                        title: "下一页",
+                        click: function (evt) {
+                            if (Protocol.ColumnsPage < Math.ceil(Protocol.ColumnsValues.length / PageSize)) {
+                                updateColumnPage();
+                                clearAll(ColumnsList);
+                                Protocol.ColumnsPage++;
+                                loadColumnPage(Protocol.ColumnsValues, Protocol.ColumnsPage);
+                                refreshColumnView();
+                            } else {
+                                RED.notify("已经是最后一页。", { timeout: 3000 });
+                            }
+                        }
+                    }, {
+                        label: "上一页",
+                        icon: "fa fa-arrow-left",
+                        title: "上一页",
+                        click: function (evt) {
+                            if (Protocol.ColumnsPage > 1) {
+                                updateColumnPage();
+                                clearAll(ColumnsList);
+                                Protocol.ColumnsPage--;
+                                loadColumnPage(Protocol.ColumnsValues, Protocol.ColumnsPage);
+                                refreshColumnView();
+                            }
+                        }
+                    }]
+            });
+
+            $(ColumnsList)
+                .closest('.red-ui-editableList')
+                .find('button.red-ui-editableList-addButton')
+                .each(function () {
+                    const $button = $(this);
+                    if ($button.attr("title") === "上一页" || $button.attr("title") === "下一页") {
+                        $button.css({
+                            'margin-right': '4px',
+                            'float': 'right',
+                            'margin-top': '4px'
+                        });
+                    }
+                });
+
+            //初始化列头
+            initColumnHeaders();
+            //加载数据第一页
+            loadColumnPage(this.columns, 1);
+            //附加文件上传组件到编辑区下方
+            $('<input type="file" id="node-import" style="display: none"/>').appendTo($('.form-row .red-ui-editableList')[0]);
+            $('#node-import').on("change", handleFileImport);
+            //刷新界面
+            refreshColumnView();
+            $('.editor-tray').css('width', '800px');
+            $('.editor-tray-body').css('min-width', '500px');
+
+            //添加列
+            function addColumn(data, container) {
+                // 处理 data 为空的情况
+                data = data || {};
+                // 创建一个 DocumentFragment 来存储动态生成的元素，最后一次性插入，提高性能
+                let fragment = document.createDocumentFragment();
+                for (let colConfig of Protocol.ColumnsConfig) {
+                    let element;
+                    if (colConfig.type === 'input') {
+                        element = document.createElement('input');
+                        element.type = 'text';
+                        element.className = `${colConfig.key} columns ${colConfig.len}`;
+                        element.placeholder = colConfig.key;
+                        element.value = data[colConfig.key] ? data[colConfig.key].toString().replace(/"/g, '&quot;') : '';
+                    } else if (colConfig.type === 'select') {
+                        element = document.createElement('select');
+                        element.className = `${colConfig.key} columns ${colConfig.len}`;
+                        for (let option of colConfig.option) {
+                            let optionElement = document.createElement('option');
+                            optionElement.value = option;
+                            optionElement.textContent = option;
+                            if (option === data.ValueType) {
+                                optionElement.selected = true;
+                            }
+                            element.appendChild(optionElement);
+                        }
+                    }
+                    if (element) {
+                        fragment.appendChild(element);
+                    }
+                }
+                container.append(fragment);
+            }
+
+            //加载指定的页
+            function loadColumnPage(columns, page) {
+                for (var i = PageSize * (page - 1); i < PageSize * page && i < columns.length; i++) {
+                    var listItem = $(RowHTML).appendTo($(ColumnsList));
+                    addColumn(columns[i], listItem.find('.red-ui-editableList-item-content'));
+                }
+                $(TotalColumnsCount)[0].innerText = '测点总数:' + columns.length;
+                $(ColumnsPageCount)[0].innerText = '当前页:' + page;
+                $('.red-ui-editableList-item-remove').click(function (event) {
+                    event.currentTarget.parentElement.classList.add('red-ui-editableList-item-deleting');
+                    setTimeout(function () {
+                        event.currentTarget.parentElement.remove();
+                    }, 300);
+                    updateColumnsCount(-1);
+                });
+            }
+
+            //初始化列头
+            function initColumnHeaders() {
+                labelHtml = '', fieldMap = {}, fieldOrder = [];
+                //列头初始化
+                for (const colConfig of Protocol.ColumnsConfig) {
+                    //拼接 HTML
+                    labelHtml += `<label class="columns ${colConfig.len} ${colConfig.key}"><i class="icon-tag"></i><span>${colConfig.name}</span></label>`;
+                    // 初始化 fieldMap 和 fieldOrder
+                    fieldMap[colConfig.key] = -1;
+                    fieldOrder.push(colConfig.key);
+                }
+                // 生成完整的列头 HTML 并插入到目标容器之前
+                const columnHeaderHtml = `<ol id="node-input-columns-lable" class="red-ui-editableList-list ui-sortable"><li class="red-ui-editableList-item-sortable"><div class="red-ui-editableList-item-content">${labelHtml}</div></li></ol>`;
+                // 将生成的列头 HTML 插入到容器之前
+                $(ColumnsList).before(columnHeaderHtml);
+            }
+
+            //更新行数
+            function updateColumnsCount(change) {
+                change = change || 0;
+                let listCount = $(ColumnsList + ' li').length;
+                let totalCount = Protocol.ColumnsValues.length;
+                if (Protocol.ColumnsPage * PageSize > totalCount) {
+                    $(TotalColumnsCount)[0].innerText = '测点总数:' + ((Protocol.ColumnsPage - 1) * PageSize + listCount + change).toString();
+                } else {
+                    $(TotalColumnsCount)[0].innerText = '测点总数:' + (parseInt(totalCount) - PageSize + parseInt(listCount) + parseInt(change)).toString();
+                }
+                $(ColumnsPageCount)[0].innerText = '当前页:' + Protocol.ColumnsPage;
+            }
+
+            //更新当前页面内容到数据
+            function updateColumnPage() {
+                // 计算起始位置
+                let startIndex = PageSize * (Protocol.ColumnsPage - 1);
+                // 使用 splice 方法替换指定位置的数据
+                Protocol.ColumnsValues.splice(startIndex, PageSize, ...getPageData(ColumnsList, Protocol.ColumnsConfig));
+            }
+
+            //更新视图
+            function refreshColumnView() {
+                $('.columns.normal').css('width', '160px').css('margin-left', '5px');
+                $('.columns.short').css('width', '60px').css('margin-left', '5px');
+                let short = Protocol.ColumnsConfig.filter(item => item.len === 'short').length;
+                let width = 165 * (Protocol.ColumnsConfig.length - short) + 65 * short + 68;
+                $(ColumnsList).css('min-width', width.toString() + 'px');
+                $('#node-input-columns-lable').css('min-width', width.toString() + 'px');
+            }
+
+            //清空
+            function clearAll(id) {
+                $(id).children().remove();
+            }
+
+            //导入文件
+            function handleFileImport(event) {
+                var file = event.target.files[0];
+                if (!file) {
+                    return;
+                }
+                var reader = new FileReader();
+                reader.onload = function (event) {
+                    var _fieldMap = fieldMap;
+                    var line, field;
+                    var result = event.target.result || '';
+                    var lines = result.split(/[\r\n]+/);
+                    if (!lines.length) {
+                        alert('file is empty!');
+                        return;
+                    }
+                    updateColumnPage();
+                    for (line = 0; line < lines.length; line++) {
+                        lines[line] = lines[line].trim();
+                        if (lines[line] == '') continue;
+                        field = lines[line].split(/[	,]/);
+                        if (line == 0) {
+                            for (var fieldIndex in field) {
+                                if (_fieldMap[field[fieldIndex]] == -1) {
+                                    _fieldMap[field[fieldIndex]] = fieldIndex;
+                                }
+                            }
+                        } else {
+                            var fieldData = {};
+                            for (var colConfig of Protocol.ColumnsConfig) {
+                                fieldData[colConfig.key] = field[_fieldMap[colConfig.key]];
+                            }
+                            Protocol.ColumnsValues.push(fieldData);
+                        }
+                    }
+                    clearAll(ColumnsList);
+                    loadColumnPage(Protocol.ColumnsValues, Protocol.ColumnsPage);
+                    updateColumnsCount();
+                    refreshColumnView();
+                };
+                reader.readAsText(file);
+                event.target.value = null;
+            }
+
+            /**
+             * -------------------------------------------------------设备转换列表--------------------------------------------------------------
+             */
+
+            let deviceSize = {
+                minHeight: 370,
+                minWidth: 450
+            }
+
+            DevicesMapping.DevicesPage = 1;
+            DevicesMapping.DevicesValues = (this.devices || []).slice();
+            DevicesMapping.DeviceConfig = [
+                {
+                    key: 'unitID',
+                    label: '源ID',
+                    len: '5'
+                }, {
+                    key: 'topic',
+                    label: 'MQTT主题',
+                    len: '20'
+                }, {
+                    key: 'deviceKey',
+                    label: '设备Key',
+                    len: '20'
+                }, {
+                    key: 'deviceSecret',
+                    label: '设备密钥',
+                    len: '15'
+                }, {
+                    key: 'productKey',
+                    label: '产品Key',
+                    len: '15'
+                }, {
+                    key: 'productSecret',
+                    label: '产品密钥',
+                    len: '15'
+                }
+            ];
+
+            //设备转换列表容器初始化
+            $(DevicesList).css('min-height', deviceSize.minHeight.toString() + 'px').css('min-width', deviceSize.minWidth.toString() + 'px').editableList({
+                sortable: true,
+                removable: true,
+                addItem: function (container, i, opt) {
+                    if ($(DevicesList).editableList('items').length > PageSize) {
+                        updateDevicesPage();
+                        clearAll(DevicesList);
+                        DevicesMapping.DevicesPage++;
+                        loadDevicesPage(DevicesMapping.DevicesValues, DevicesMapping.DevicesPage);
+                    }
+                    addDevice(opt.prop, container);
+                    element.parent().find('.red-ui-editableList-item-remove')[0].onclick = function () {
+                        updateDevicesCount(-1);
+                    };
+                    updateDevicesCount();
+                }, buttons: [
+                    {
+                        label: "全部删除",
+                        icon: "fa fa-trash-o",
+                        title: "全部删除",
+                        click: function (evt) {
+                            clearAll(DevicesList);
+                            $(TotalDevicesCount)[0].innerText = '设备总数:0';
+                            $(DevicesPageCount)[0].innerText = '当前页:1';
+                            DevicesMapping.DevicesPage = 1;
+                            DevicesMapping.DevicesValues = [];
+                        }
+                    }, {
+                        label: "下一页",
+                        icon: "fa fa-arrow-right",
+                        title: "下一页",
+                        click: function (evt) {
+                            if (DevicesMapping.DevicesPage < Math.ceil(DevicesMapping.DevicesValues.length / PageSize)) {
+                                updateDevicesPage();
+                                clearAll(DevicesList);
+                                DevicesMapping.DevicesPage++;
+                                loadDevicesPage(DevicesMapping.DevicesValues, DevicesMapping.DevicesPage);
+                                //refreshColumnView();
+                            } else {
+                                RED.notify("已经是最后一页。", { timeout: 1500 });
+                            }
+                        }
+                    }, {
+                        label: "上一页",
+                        icon: "fa fa-arrow-left",
+                        title: "上一页",
+                        click: function (evt) {
+                            if (DevicesMapping.DevicesPage > 1) {
+                                updateDevicesPage();
+                                clearAll(DevicesList);
+                                DevicesMapping.DevicesPage--;
+                                loadDevicesPage(DevicesMapping.DevicesValues, DevicesMapping.DevicesPage);
+                                //refreshColumnView();
+                            } else {
+                                RED.notify("已经是第一页。", { timeout: 1500 });
+                            }
+                        }
+                    }]
+            });
+
+            $(DevicesList)
+                .closest('.red-ui-editableList')
+                .find('button.red-ui-editableList-addButton')
+                .each(function () {
+                    const $button = $(this);
+                    if ($button.attr("title") === "上一页" || $button.attr("title") === "下一页") {
+                        $button.css({
+                            'margin-right': '4px',
+                            'float': 'right',
+                            'margin-top': '4px'
+                        });
+                    }
+                });
+
+            initDevicesHeaders();
+            loadDevicesPage(this.devices, 1);
+
+            /**
+             * 初始化设备表头
+             */
+            function initDevicesHeaders() {
+                let deviceHeaderHTML = "";
+                //拼接 HTML
+                DevicesMapping.DeviceConfig.forEach(item => {
+                    deviceHeaderHTML += `<label style="width: ${item.len}%; margin-right: 8px;" class="devices ${item.key}"><i class="icon-tag"></i><span>${item.label}</span></label>`;
+                });
+                let devicesHeader = `<ol id="node-input-devices-lable" class="red-ui-editableList-list ui-sortable"><li class="red-ui-editableList-item-sortable"><div class="red-ui-editableList-item-content">${deviceHeaderHTML}</div></li></ol>`;
+                //添加到list之前可以防止获取数据时的第一行空数据
+                $(DevicesList).before(devicesHeader);
+            }
+
+            /**
+             * 增加设备转换列
+             **/
+            function addDevice(data, container) {
+                // 处理 data 为空的情况
+                data = data || {};
+                // 创建一个 DocumentFragment 来存储动态生成的元素，最后一次性插入，提高性能
+                let fragment = document.createDocumentFragment();
+                for (let config of DevicesMapping.DeviceConfig) {
+                    let element;
+                    element = document.createElement('input');
+                    element.type = 'text';
+                    element.className = config.key;
+                    element.placeholder = config.key;
+                    element.style = `width: ${config.len}%;  margin-right: 8px;`;
+                    element.value = data[config.key] ? data[config.key].toString().replace(/"/g, '&quot;') : '';
+                    if (element) {
+                        fragment.appendChild(element);
+                    }
+                }
+                container.append(fragment);
+            }
+
+            //更新当前页面内容到数据
+            function updateDevicesPage() {
+                // 计算起始位置
+                let startIndex = PageSize * (DevicesMapping.DevicesPage - 1);
+                // 使用 splice 方法替换指定位置的数据
+                DevicesMapping.DevicesValues.splice(startIndex, PageSize, ...getPageData(DevicesList, DevicesMapping.DeviceConfig));
+            }
+
+            //加载指定的页
+            function loadDevicesPage(devices, page) {
+                for (var i = PageSize * (page - 1); i < PageSize * page && i < devices.length; i++) {
+                    var listItem = $(RowHTML).appendTo($(DevicesList));
+                    addDevice(devices[i], listItem.find('.red-ui-editableList-item-content'));
+                }
+                $(TotalDevicesCount)[0].innerText = '设备总数:' + devices.length;
+                $(DevicesPageCount)[0].innerText = '当前页:' + page;
+                $('.red-ui-editableList-item-remove').click(function (event) {
+                    event.currentTarget.parentElement.classList.add('red-ui-editableList-item-deleting');
+                    setTimeout(function () {
+                        event.currentTarget.parentElement.remove();
+                    }, 300);
+                    updateDevicesCount(-1);
+                });
+            }
+
+            //更新行数
+            function updateDevicesCount(change) {
+                change = change || 0;
+                let listCount = $(DevicesList + ' li').length;
+                let totalCount = DevicesMapping.DevicesValues.length;
+                if (DevicesMapping.DevicesPage * PageSize > totalCount) {
+                    $(TotalDevicesCount)[0].innerText = '测点总数:' + ((DevicesMapping.DevicesPage - 1) * PageSize + listCount + change).toString();
+                } else {
+                    $(TotalDevicesCount)[0].innerText = '测点总数:' + (parseInt(totalCount) - PageSize + parseInt(listCount) + parseInt(change)).toString();
+                }
+                $(DevicesPageCount)[0].innerText = '当前页:' + DevicesMapping.DevicesPage;
+            }
+        },
+        // 钩子函数,点击 template 中的完成按钮时触发
+        oneditsave: function () {
+            // 使用 splice 替换指定范围的数据
+            Protocol.ColumnsValues.splice(PageSize * (Protocol.ColumnsPage - 1), PageSize, ...getPageData(ColumnsList, Protocol.ColumnsConfig));
+            DevicesMapping.DevicesValues.splice(PageSize * (DevicesMapping.DevicesPage - 1), PageSize, ...getPageData(DevicesList, DevicesMapping.DeviceConfig));
+            //保存数据
+            this.columns = Protocol.ColumnsValues;
+            this.devices = DevicesMapping.DevicesValues;
+        },
+        //钩子函数,节点大小改变时触发
+        oneditresize: function (size) {
+            var heightThreshold = 170;
+            var newHeight = (size.height - heightThreshold).toString() + 'px';
+            $('.red-ui-editableList-border').css('height', newHeight);
+        }
+    });
+
+    /**
+     * 获取当前页的数据
+     * @param id 列表容器的 id
+     * @param colConfigs 列配置数组
+     * @returns {Array} 当前页的数据数组
+     */
+    function getPageData(id, colConfigs) {
+        // 创建一个空数组来存储每个字段的数据
+        let fieldsDataArray = [];
+        // 遍历列表项，收集数据
+        $(id).editableList('items').each(function () {
+            let $item = $(this);
+            let fieldData = {};
+            // 遍历列配置，提取数据
+            for (let colConfig of colConfigs) {
+                fieldData[colConfig.key] = $item.find('.' + colConfig.key).val();
+            }
+            // 将字段数据对象存储到数组中
+            fieldsDataArray.push(fieldData);
+        });
+        return fieldsDataArray;
+    }
+</script>
+
+<!--data-template-name 必须和 js 中 RED.nodes.registerType 的值一致 -->
+<!--template 是模板，可以理解成表单，节点需要的信息可以从这里输入-->
+<script type="text/html" data-template-name="modbus-decode">
+    <div class="form-row ">
+        <div class="red-ui-tabs" id="node-config-tabs">
+            <div>
+                <ul style="min-width:450px;margin-bottom:20px">
+                    <li class="red-ui-tab active" style="width: 48%;">
+                        <a href="#tab-config" class="red-ui-tab-label">I/O配置</a>
+                    </li>
+                    <li class="red-ui-tabs" style="width: 48%;">
+                        <a href="#tab-device" class="red-ui-tab-label">设备配置</a> <!-- 新增的标签 -->
+                    </li>
+                </ul>      
+            </div>
+        </div>
+    </div>
+
+    <div class="form-row tab-item tab-config" id="tab-config">
+        <label for="node-input-columns">
+            <i class="icon-list"></i>
+            <span>测点列表</span>
+        </label>
+        <span id="columns-count-total" style="float: right;margin-right: 10px;"></span>
+        <span id="columns-count-page" style="float: right;margin-right: 10px;"></span>
+        <ol id="node-input-columns-container"></ol>
+    </div>
+
+    <!-- 新增的高级配置 -->
+    <div class="form-row tab-item" id="tab-device" style="display: none;">
+        <div class="form-row">
+            <label for="devices-count-page">
+                <i class="icon-list"></i>
+                <span>设备列表</span>
+            </label>
+            <span id="devices-count-total" style="float: right;margin-right: 10px;"></span>
+            <span id="devices-count-page" style="float: right;margin-right: 10px;"></span>
+            <ol id="node-input-devices-container"></ol>
+        </div>
+    </div>
+</script>
+
+<!--data-help-name 必须和 js 中 RED.nodes.registerType 的值一致 -->
+<!--help 是节点的帮助文档-->
+<script type="text/html" data-help-name="modbus-decode">
+    <p>modbus的协议解析节点，依赖node-red-contrib-modbus,从modbus-getter，modbus-flex-getter获取数据后进行解析</p>
+    <p>输出1为JS对象输出,输出2为物联网平台MQTT消息格式输出</p>
+    <p>算法字段参考了sprintf.js的格式要求并支持toFixed函数定义保留小数个数</p>
+    <p>例如:(%d * 0.001).toFixed(3)</p>
+    <p>以下说明引自https://github.com/alexei/sprintf.js#readme</p>
+    <p>
+        The placeholders in the format string are marked by % and are followed by one or more of these elements, in this order:<br>
+        <br>
+        An optional number followed by a $ sign that selects which argument index to use for the value. If not specified, arguments will be placed in the same order as the placeholders in the input string.<br>
+        An optional + sign that forces to precede the result with a plus or minus sign on numeric values. By default, only the - sign is used on negative numbers.<br>
+        An optional padding specifier that says what character to use for padding (if specified). Possible values are 0 or any other character preceded by a ' (single quote). The default is to pad with spaces.<br>
+        An optional - sign, that causes sprintf to left-align the result of this placeholder. The default is to right-align the result.<br>
+        An optional number, that says how many characters the result should have. If the value to be returned is shorter than this number, the result will be padded. When used with the j (JSON) type specifier, the padding length specifies the tab size used for indentation.<br>
+        An optional precision modifier, consisting of a . (dot) followed by a number, that says how many digits should be displayed for floating point numbers. When used with the g type specifier, it specifies the number of significant digits. When used on a string, it causes the result to be truncated.<br>
+        A type specifier that can be any of:<br>
+        % — yields a literal % character<br>
+        b — yields an integer as a binary number<br>
+        c — yields an integer as the character with that ASCII value<br>
+        d or i — yields an integer as a signed decimal number<br>
+        e — yields a float using scientific notation<br>
+        u — yields an integer as an unsigned decimal number<br>
+        f — yields a float as is; see notes on precision above<br>
+        g — yields a float as is; see notes on precision above<br>
+        o — yields an integer as an octal number<br>
+        s — yields a string as is<br>
+        t — yields true or false<br>
+        T — yields the type of the argument1<br>
+        v — yields the primitive value of the specified argument<br>
+        x — yields an integer as a hexadecimal number (lower-case)<br>
+        X — yields an integer as a hexadecimal number (upper-case)<br>
+        j — yields a JavaScript object or array as a JSON encoded string<br>
+    </p>
+</script>
